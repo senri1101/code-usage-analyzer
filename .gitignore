@@ -8,6 +8,12 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
 build/
 develop-eggs/
 dist/
@@ -128,6 +134,9 @@ celerybeat.pid
 *.sage.py
 
 # Environments
+*.egg-info/
+.installed.cfg
+*.egg
 .env
 .venv
 env/
@@ -169,3 +178,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+refactoring_candidates.json
+results.json
