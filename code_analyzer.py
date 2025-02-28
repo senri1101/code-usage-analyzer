@@ -106,14 +106,54 @@ class CallVisitor(ast.NodeVisitor):
 class CodeAnalyzer:
     """コードベース全体を分析するクラス"""
     
-    def __init__(self, directory: str):
+    def __init__(self, directory: str, skip_directories: Optional[List[str]] = None):
         self.directory = directory
         self.functions = []  # 関数定義のリスト
         self.calls = []      # 関数呼び出しのリスト
         
+        # スキップするディレクトリ（デフォルトの一般的な無視すべきディレクトリ）
+        self.skip_directories = set([
+            # Python関連
+            '.venv', 'venv', 'env', '.env', '.virtualenv', 'virtualenv',
+            '__pycache__', '.pytest_cache', '.mypy_cache', '.coverage', 'htmlcov',
+            '.tox', '.eggs', '*.egg-info', 'build', 'dist', '.ipynb_checkpoints','layer',
+            # JavaScript/Node.js関連
+            'node_modules', '.npm', '.yarn', '.pnpm',
+            # Java/Maven/Gradle関連
+            'target', '.gradle', 'build', '.m2',
+            # Git関連
+            '.git',
+            # 編集者関連
+            '.idea', '.vscode', '.vs', '.history',
+            # AWS関連
+            '.aws-sam', 'cdk.out', '.serverless',
+            # その他一般的なバイナリ/依存関係フォルダ
+            'bin', 'obj', '.cache', 'vendor', '.bundle',
+            # Docker関連
+            '.docker',
+            # 一時ファイル関連
+            'tmp', 'temp', 'logs',
+        ])
+        
+        # 追加のスキップディレクトリがある場合
+        if skip_directories:
+            self.skip_directories.update(skip_directories)
+        
     def analyze(self) -> None:
         """指定されたディレクトリ内のPythonファイルを分析"""
-        for root, _, files in os.walk(self.directory):
+        for root, dirs, files in os.walk(self.directory):
+            # スキップすべきディレクトリを除外（dirs内の要素を破壊的に変更）
+            dirs_to_remove = []
+            for i, d in enumerate(dirs):
+                if any(pattern in d or d == pattern for pattern in self.skip_directories):
+                    dirs_to_remove.append(i)
+            
+            # 逆順で削除（インデックスがずれるのを防ぐ）
+            for i in reversed(dirs_to_remove):
+                print(f"⏩ スキップ: {os.path.join(root, dirs[i])}")
+                del dirs[i]
+            
+            # ファイルの処理
             for file in files:
                 if file.endswith('.py'):
                     filepath = os.path.join(root, file)
@@ -270,11 +310,17 @@ def main():
     parser.add_argument('--html', '-html', help='HTMLレポートを生成する', action='store_true')
     parser.add_argument('--html-output', help='HTML出力ファイル名', default='code_analysis_report.html')
     parser.add_argument('--verbose', '-v', action='store_true', help='詳細な出力を表示')
+    parser.add_argument('--skip-dirs', help='スキップするディレクトリ（カンマ区切り）', default='')
     
     args = parser.parse_args()
     
+    # スキップするディレクトリの処理
+    skip_dirs = []
+    if args.skip_dirs:
+        skip_dirs = [d.strip() for d in args.skip_dirs.split(',')]
+    
     print(f"🔍 ディレクトリの分析を開始: {args.directory}")
-    analyzer = CodeAnalyzer(args.directory)
+    analyzer = CodeAnalyzer(args.directory, skip_dirs)
     analyzer.analyze()
     
     # プライベートメソッド候補の特定
