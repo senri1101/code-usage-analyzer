@@ -274,6 +274,10 @@ class CodeAnalyzer:
         candidates = []
         
         for func in self.functions:
+            # 既にプライベートメソッド（名前が "_" で始まる）はスキップ
+            if func.name.startswith('_'):
+                continue
+                
             # 関数の一意の識別子
             func_id = (func.file, func.name, func.class_name)
             count = call_count.get(func_id, 0)
