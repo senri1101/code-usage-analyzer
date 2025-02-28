@@ -267,6 +267,8 @@ def main():
     parser.add_argument('--analyze-widgets', action='store_true', help='Flutterウィジェットも分析対象に含める')
     parser.add_argument('--go-module', help='Goモジュールパス（例：github.com/user/project）')
     parser.add_argument('--output', '-o', help='結果を出力するJSONファイル', default='refactoring_candidates.json')
+    parser.add_argument('--html', '-html', help='HTMLレポートを生成する', action='store_true')
+    parser.add_argument('--html-output', help='HTML出力ファイル名', default='code_analysis_report.html')
     parser.add_argument('--verbose', '-v', action='store_true', help='詳細な出力を表示')
     
     args = parser.parse_args()
@@ -288,6 +290,17 @@ def main():
     print(f"   - 検出された関数呼び出し: {len(analyzer.calls)}")
     print(f"   - プライベートメソッド候補: {len(candidates)}")
     print(f"\n💡 プライベートメソッド候補リストは {args.output} に保存されました")
+    
+    # HTMLレポートの生成
+    if args.html:
+        try:
+            from html_reporter import generate_html_report
+            print(f"\n🌐 HTMLレポートを生成しています...")
+            generate_html_report(args.output, args.html_output, args.directory)
+            print(f"✨ HTMLレポートを生成しました: {args.html_output}")
+        except ImportError:
+            print(f"\n⚠️ HTMLレポート生成には html_reporter.py が必要です")
+            print(f"   スクリプトを同じディレクトリに配置して再実行してください")
     
     if args.verbose and candidates:
         print("\nプライベートメソッド候補:")

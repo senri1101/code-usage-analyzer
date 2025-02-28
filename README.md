@@ -1,6 +1,6 @@
 # CodeUsageAnalyzer
 
-![License](https://img.shields.io/github/license/senri1101/code-usage-analyzer)
+![License](https://img.shields.io/github/license/YourUsername/CodeUsageAnalyzer)
 ![Python Version](https://img.shields.io/badge/python-3.6%2B-blue)
 
 コードベース内の関数やメソッドの使用状況を分析し、リファクタリングの候補を特定するツールです。
@@ -38,6 +38,19 @@ pip install -r requirements.txt
 
 ```bash
 python code_analyzer.py /path/to/your/code --output results.json
+```
+
+### HTML形式のレポート出力
+
+```bash
+# JSON出力とHTMLレポートの両方を生成
+python code_analyzer.py /path/to/your/code --html
+
+# HTMLレポートのファイル名を指定
+python code_analyzer.py /path/to/your/code --html --html-output report.html
+
+# HTMLレポーターを直接実行（JSONファイルから）
+python html_reporter.py refactoring_candidates.json --output report.html
 ```
 
 ### 言語を指定して実行

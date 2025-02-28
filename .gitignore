@@ -185,3 +185,4 @@ cython_debug/
 .DS_Store
 refactoring_candidates.json
 results.json
+code_analysis_report.html
