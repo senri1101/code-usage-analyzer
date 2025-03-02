@@ -3,14 +3,15 @@
 ![License](https://img.shields.io/github/license/YourUsername/CodeUsageAnalyzer)
 ![Python Version](https://img.shields.io/badge/python-3.6%2B-blue)
 
-コードベース内の関数やメソッドの使用状況を分析し、リファクタリングの候補を特定するツールです。
+コードベース内の関数やメソッドの使用状況を分析し、リファクタリングの候補および未使用要素（関数、クラス、変数、定数等）を特定するツールです。
 
 ## 機能
 
 - Pythonコードベース内の関数/メソッド定義の自動検出
 - 関数/メソッドの呼び出し回数の追跡
 - プライベートメソッドにできる候補の特定（1回だけ呼ばれていて、同じファイル内からの呼び出し）
-- 結果のJSON形式での出力
+- 未使用の関数、クラス、変数、定数などの抽出
+- 結果のJSON形式およびHTML形式での出力
 
 ## インストール
 
@@ -37,10 +38,12 @@ pip install -r requirements.txt
 ### 基本的な使用法
 
 ```bash
-python code_analyzer.py /path/to/your/code --output results.json
+python code_analyzer.py /path/to/your/code --output refactoring_candidates.json
 ```
 
 ### HTML形式のレポート出力
+
+HTMLレポートには、プライベートメソッド候補に加えて未使用要素（関数、クラス、変数、定数）の情報も表示されます。
 
 ```bash
 # JSON出力とHTMLレポートの両方を生成
@@ -51,6 +54,14 @@ python code_analyzer.py /path/to/your/code --html --html-output report.html
 
 # HTMLレポーターを直接実行（JSONファイルから）
 python html_reporter.py refactoring_candidates.json --output report.html
+```
+
+### 未使用要素の抽出
+
+未使用要素の検出機能を有効にするには、`--find-unused`（または `-u`）オプションを使用してください。検出された未使用要素は、指定したJSONファイル（デフォルトは `unused_elements.json`）に保存され、HTMLレポートにも反映されます。
+
+```bash
+python code_analyzer.py /path/to/your/code --find-unused
 ```
 
 ### 言語を指定して実行
@@ -70,6 +81,10 @@ python code_analyzer.py /path/to/go/project --go-module github.com/username/proj
 
 - `directory`: 分析するコードベースのディレクトリパス（必須）
 - `--output`, `-o`: 結果を出力するJSONファイル（デフォルト: `refactoring_candidates.json`）
+- `--find-unused`, `-u`: 未使用の関数、クラス、変数、定数を検出する
+- `--unused-output`: 未使用要素を出力するJSONファイル（デフォルト: `unused_elements.json`）
+- `--html`, `-html`: HTMLレポートを生成する
+- `--html-output`: HTML出力ファイル名（デフォルト: `code_analysis_report.html`）
 - `--verbose`, `-v`: 詳細な出力を表示
 
 ## 出力例
@@ -88,6 +103,26 @@ python code_analyzer.py /path/to/go/project --go-module github.com/username/proj
         "function": "another_method"
       }
     ]
+  }
+]
+```
+
+未使用要素の例:
+
+```json
+[
+  {
+    "type": "function",
+    "file": "/path/to/your/code/module.py",
+    "class": "MyClass",
+    "name": "unused_method",
+    "line": 88
+  },
+  {
+    "type": "class",
+    "file": "/path/to/your/code/another_module.py",
+    "name": "UnusedClass",
+    "line": 10
   }
 ]
 ```

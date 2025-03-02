@@ -4,6 +4,7 @@ CodeUsageAnalyzer - コード利用状況分析ツール
 
 このツールは、Pythonコードベース内の関数やメソッドの呼び出し回数を分析し、
 リファクタリング候補（プライベートメソッドに変更できそうなメソッド）を特定します。
+また、未使用の関数、クラス、変数なども特定します。
 """
 
 import os
@@ -17,6 +18,8 @@ from typing import Dict, List, Set, Tuple, Optional, Any
 # 解析結果を格納するデータ構造
 FunctionInfo = namedtuple('FunctionInfo', ['name', 'file', 'class_name', 'lineno'])
 CallInfo = namedtuple('CallInfo', ['name', 'file', 'class_name', 'caller_file', 'caller_class', 'caller_function'])
+VariableInfo = namedtuple('VariableInfo', ['name', 'file', 'class_name', 'function_name', 'lineno', 'is_constant'])
+ClassInfo = namedtuple('ClassInfo', ['name', 'file', 'lineno'])
 
 
 class FunctionVisitor(ast.NodeVisitor):
@@ -26,8 +29,18 @@ class FunctionVisitor(ast.NodeVisitor):
         self.filename = filename
         self.current_class = None
         self.functions = []
+        self.classes = []
+        self.variables = []
+        self.current_function = None
         
     def visit_ClassDef(self, node):
+        # クラス定義を記録
+        self.classes.append(ClassInfo(
+            name=node.name,
+            file=self.filename,
+            lineno=node.lineno
+        ))
+        
         old_class = self.current_class
         self.current_class = node.name
         # クラス内の全ノードを訪問
@@ -42,7 +55,46 @@ class FunctionVisitor(ast.NodeVisitor):
             class_name=self.current_class,
             lineno=node.lineno
         ))
+        
+        old_function = self.current_function
+        self.current_function = node.name
         # 関数内の全ノードを訪問
+        self.generic_visit(node)
+        self.current_function = old_function
+    
+    def visit_Assign(self, node):
+        # 変数定義を記録
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                # 定数かどうか判定（大文字の場合は定数と見なす）
+                is_constant = target.id.isupper()
+                
+                self.variables.append(VariableInfo(
+                    name=target.id,
+                    file=self.filename,
+                    class_name=self.current_class,
+                    function_name=self.current_function,
+                    lineno=node.lineno,
+                    is_constant=is_constant
+                ))
+        
+        self.generic_visit(node)
+    
+    def visit_AnnAssign(self, node):
+        # 型アノテーション付きの変数定義
+        if isinstance(node.target, ast.Name):
+            # 定数かどうか判定（大文字の場合は定数と見なす）
+            is_constant = node.target.id.isupper()
+            
+            self.variables.append(VariableInfo(
+                name=node.target.id,
+                file=self.filename,
+                class_name=self.current_class,
+                function_name=self.current_function,
+                lineno=node.lineno,
+                is_constant=is_constant
+            ))
+        
         self.generic_visit(node)
 
 
@@ -54,6 +106,8 @@ class CallVisitor(ast.NodeVisitor):
         self.current_class = None
         self.current_function = None
         self.calls = []
+        self.variable_uses = []
+        self.class_uses = set()
         
     def visit_ClassDef(self, node):
         old_class = self.current_class
@@ -83,6 +137,8 @@ class CallVisitor(ast.NodeVisitor):
             # クラスやモジュールからのメソッド呼び出し
             else:
                 class_name = node.func.value.id
+                # クラスが使用されたことを記録
+                self.class_uses.add(node.func.value.id)
         
         # 直接的な関数呼び出しの場合 (function())
         elif isinstance(node.func, ast.Name):
@@ -101,6 +157,30 @@ class CallVisitor(ast.NodeVisitor):
         
         # 呼び出し内の引数なども訪問
         self.generic_visit(node)
+    
+    def visit_Name(self, node):
+        # 変数の使用を記録
+        if isinstance(node.ctx, ast.Load):
+            self.variable_uses.append((
+                node.id,
+                self.filename,
+                self.current_class,
+                self.current_function
+            ))
+        
+        self.generic_visit(node)
+    
+    def visit_Import(self, node):
+        # importされたクラスを記録
+        for name in node.names:
+            self.class_uses.add(name.name)
+        self.generic_visit(node)
+    
+    def visit_ImportFrom(self, node):
+        # from import されたクラスを記録
+        for name in node.names:
+            self.class_uses.add(name.name)
+        self.generic_visit(node)
 
 
 class CodeAnalyzer:
@@ -110,6 +190,10 @@ class CodeAnalyzer:
         self.directory = directory
         self.functions = []  # 関数定義のリスト
         self.calls = []      # 関数呼び出しのリスト
+        self.variables = []  # 変数定義のリスト
+        self.variable_uses = []  # 変数使用のリスト
+        self.classes = []    # クラス定義のリスト
+        self.class_uses = set()  # クラス使用のセット
         
         # スキップするディレクトリ（デフォルトの一般的な無視すべきディレクトリ）
         self.skip_directories = set([
@@ -191,24 +275,33 @@ class CodeAnalyzer:
         # ASTの解析
         tree = ast.parse(content, filename=filepath)
         
-        # 関数定義の収集
+        # 関数とクラス定義の収集
         function_visitor = FunctionVisitor(filepath)
         function_visitor.visit(tree)
         self.functions.extend(function_visitor.functions)
+        self.classes.extend(function_visitor.classes)
+        self.variables.extend(function_visitor.variables)
         
-        # 関数呼び出しの収集
+        # 関数呼び出しと変数使用の収集
         call_visitor = CallVisitor(filepath)
         call_visitor.visit(tree)
         self.calls.extend(call_visitor.calls)
+        self.variable_uses.extend(call_visitor.variable_uses)
+        self.class_uses.update(call_visitor.class_uses)
         
         print(f"✓ 解析完了: {filepath} (Python)")
     
     def _analyze_dart_file(self, filepath: str) -> None:
-        """Dartファイルを分析 (将来的な実装)"""
-        # 将来的にはDart用のパーサーを実装
-        print(f"! Dart解析はまだ実装されていません: {filepath}")
-        # プレースホルダーとして簡易解析（テキストベース）を行う
-        self._analyze_text_based(filepath, r'(?:void|Future|Widget|String|int|bool|double|dynamic|var)\s+(\w+)\s*\(', r'(?:\w+)\.(\w+)\s*\(')
+        """Dartファイルを分析 (簡易テキストベース解析)"""
+        import re
+        print(f"✓ Dartファイルの簡易解析開始: {filepath}")
+        # 修正後の正規表現:
+        # ・アノテーション、async/static/final のオプショナルな出現
+        # ・返り値の型が存在する場合、型にジェネリクスやnull許容記号 (?) を許容
+        # ・関数名の後にオプショナルなジェネリックパラメータを許容
+        func_pattern = r'(?:@\w+\s+)*(?:\b(?:async|static|final)\b\s+)*(?:(?:\b(?:void|Future(?:<[^>]+>)?(?:\?)?|Widget|String|int|bool|double|dynamic)(?:\?)?)\s+)?(\w+)(?:\s*<[^>]+>)?\s*\('
+        call_pattern = r'(\w+)\s*\('
+        self._analyze_text_based(filepath, func_pattern, call_pattern)
     
     def _analyze_go_file(self, filepath: str) -> None:
         """Goファイルを分析 (将来的な実装)"""
@@ -231,9 +324,10 @@ class CodeAnalyzer:
         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
         
-        # 関数定義を検索
-        for match in re.finditer(func_pattern, content):
-            func_name = match.group(1) if match.group(1) else match.group(2)
+        # 関数定義を検索 (re.MULTILINEとre.DOTALLのフラグを追加)
+        for match in re.finditer(func_pattern, content, flags=re.MULTILINE | re.DOTALL):
+            # グループ1から関数名を取得
+            func_name = match.group(1)
             if func_name:
                 self.functions.append(FunctionInfo(
                     name=func_name,
@@ -243,7 +337,7 @@ class CodeAnalyzer:
                 ))
         
         # 関数呼び出しを検索
-        for match in re.finditer(call_pattern, content):
+        for match in re.finditer(call_pattern, content, flags=re.MULTILINE | re.DOTALL):
             call_name = match.group(1)
             if call_name:
                 self.calls.append(CallInfo(
@@ -302,6 +396,113 @@ class CodeAnalyzer:
         
         return candidates
 
+    def find_unused_functions(self) -> List[Dict[str, Any]]:
+        """未使用の関数・メソッドを特定"""
+        call_count = self.get_call_count()
+        unused_functions = []
+        
+        for func in self.functions:
+            # テスト関数は除外
+            if func.name.startswith('test_') or func.name == 'setUp' or func.name == 'tearDown':
+                continue
+                
+            # main関数は除外
+            if func.name == 'main':
+                continue
+                
+            # 特殊メソッドは除外
+            if func.name.startswith('__') and func.name.endswith('__'):
+                continue
+                
+            # 関数の一意の識別子
+            func_id = (func.file, func.name, func.class_name)
+            count = call_count.get(func_id, 0)
+            
+            # 呼び出し回数が0の場合
+            if count == 0:
+                unused_functions.append({
+                    'type': 'function',
+                    'file': func.file,
+                    'class': func.class_name,
+                    'name': func.name,
+                    'line': func.lineno
+                })
+        
+        return unused_functions
+        
+    def find_unused_classes(self) -> List[Dict[str, Any]]:
+        """未使用のクラスを特定"""
+        unused_classes = []
+        
+        for cls in self.classes:
+            # 抽象クラスやインターフェースは除外
+            if cls.name.startswith('Abstract') or cls.name.endswith('Interface'):
+                continue
+                
+            # テストクラスは除外
+            if cls.name.startswith('Test') or cls.name.endswith('Test'):
+                continue
+                
+            # クラスが使用されているかチェック
+            if cls.name not in self.class_uses:
+                unused_classes.append({
+                    'type': 'class',
+                    'file': cls.file,
+                    'name': cls.name,
+                    'line': cls.lineno
+                })
+        
+        return unused_classes
+        
+    def find_unused_variables(self) -> List[Dict[str, Any]]:
+        """未使用の変数や定数を特定"""
+        unused_variables = []
+        
+        for var in self.variables:
+            # モジュールレベルまたはクラスレベルの変数のみを対象とする
+            if var.function_name is not None:
+                continue
+                
+            # 特殊変数は除外
+            if var.name.startswith('__') and var.name.endswith('__'):
+                continue
+                
+            # 変数が使用されているかチェック
+            is_used = False
+            for use_name, use_file, use_class, use_func in self.variable_uses:
+                if var.name == use_name:
+                    # 同じファイル内で使用されている
+                    if use_file == var.file:
+                        is_used = True
+                        break
+            
+            if not is_used:
+                unused_variables.append({
+                    'type': 'variable',
+                    'file': var.file,
+                    'class': var.class_name,
+                    'name': var.name,
+                    'is_constant': var.is_constant,
+                    'line': var.lineno
+                })
+        
+        return unused_variables
+        
+    def find_all_unused_elements(self) -> List[Dict[str, Any]]:
+        """全ての未使用要素を特定"""
+        unused_elements = []
+        
+        # 未使用の関数・メソッドを取得
+        unused_elements.extend(self.find_unused_functions())
+        
+        # 未使用のクラスを取得
+        unused_elements.extend(self.find_unused_classes())
+        
+        # 未使用の変数・定数を取得
+        unused_elements.extend(self.find_unused_variables())
+        
+        return unused_elements
+
 
 def main():
     parser = argparse.ArgumentParser(description='コード利用状況分析ツール')
@@ -311,10 +512,12 @@ def main():
     parser.add_argument('--analyze-widgets', action='store_true', help='Flutterウィジェットも分析対象に含める')
     parser.add_argument('--go-module', help='Goモジュールパス（例：github.com/user/project）')
     parser.add_argument('--output', '-o', help='結果を出力するJSONファイル', default='refactoring_candidates.json')
+    parser.add_argument('--unused-output', help='未使用要素を出力するJSONファイル', default='unused_elements.json')
     parser.add_argument('--html', '-html', help='HTMLレポートを生成する', action='store_true')
     parser.add_argument('--html-output', help='HTML出力ファイル名', default='code_analysis_report.html')
     parser.add_argument('--verbose', '-v', action='store_true', help='詳細な出力を表示')
     parser.add_argument('--skip-dirs', help='スキップするディレクトリ（カンマ区切り）', default='')
+    parser.add_argument('--find-unused', '-u', action='store_true', help='未使用の関数、クラス、変数を検出する')
     
     args = parser.parse_args()
     
@@ -339,6 +542,17 @@ def main():
     print(f"   - 検出された関数/メソッド: {len(analyzer.functions)}")
     print(f"   - 検出された関数呼び出し: {len(analyzer.calls)}")
     print(f"   - プライベートメソッド候補: {len(candidates)}")
+    
+    # 未使用要素の特定と出力
+    if args.find_unused:
+        unused_elements = analyzer.find_all_unused_elements()
+        
+        with open(args.unused_output, 'w', encoding='utf-8') as f:
+            json.dump(unused_elements, f, indent=2, ensure_ascii=False)
+        
+        print(f"   - 未使用の要素: {len(unused_elements)}")
+        print(f"\n💡 未使用要素リストは {args.unused_output} に保存されました")
+    
     print(f"\n💡 プライベートメソッド候補リストは {args.output} に保存されました")
     
     # HTMLレポートの生成
@@ -356,6 +570,29 @@ def main():
         print("\nプライベートメソッド候補:")
         for i, candidate in enumerate(candidates, 1):
             print(f"{i}. {candidate['class']}.{candidate['method']} @ {os.path.basename(candidate['file'])}:{candidate['line']}")
+    
+    if args.verbose and args.find_unused and unused_elements:
+        print("\n未使用の要素:")
+        for i, element in enumerate(unused_elements, 1):
+            element_type = element['type']
+            element_name = element['name']
+            file_name = os.path.basename(element['file'])
+            line_no = element['line']
+            if element_type == 'function':
+                class_name = element.get('class', '')
+                if class_name:
+                    print(f"{i}. [未使用関数] {class_name}.{element_name} @ {file_name}:{line_no}")
+                else:
+                    print(f"{i}. [未使用関数] {element_name} @ {file_name}:{line_no}")
+            elif element_type == 'class':
+                print(f"{i}. [未使用クラス] {element_name} @ {file_name}:{line_no}")
+            elif element_type == 'variable':
+                class_name = element.get('class', '')
+                type_str = "定数" if element.get('is_constant', False) else "変数"
+                if class_name:
+                    print(f"{i}. [未使用{type_str}] {class_name}.{element_name} @ {file_name}:{line_no}")
+                else:
+                    print(f"{i}. [未使用{type_str}] {element_name} @ {file_name}:{line_no}")
 
 
 if __name__ == "__main__":

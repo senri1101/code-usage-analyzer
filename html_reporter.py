@@ -120,7 +120,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             margin-bottom: 10px;
         }}
         
-        .candidate {{
+        .candidate, .unused-element {{
             border-left: 4px solid var(--accent-color);
             padding-left: 15px;
             margin-bottom: 25px;
@@ -391,6 +391,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
         </div>
         
+        <div class="card">
+            <h2>未使用要素</h2>
+            <p>以下は一度も呼ばれていない、または使用されていない関数、クラス、変数、定数です。</p>
+            <div id="unused-elements">
+                {unused_elements_html}
+            </div>
+        </div>
+        
         <footer>
             <p>Code Usage Analyzer レポート | 生成日時: {analysis_date}</p>
         </footer>
@@ -411,20 +419,27 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             const fileFilter = document.getElementById('file-filter').value.toLowerCase();
             const languageFilter = document.getElementById('language-filter').value;
             
-            const candidates = document.querySelectorAll('.candidate');
+            const candidateElements = document.querySelectorAll('.candidate');
+            const unusedElements = document.querySelectorAll('.unused-element');
             
-            candidates.forEach(candidate => {{
-                const filePath = candidate.getAttribute('data-file').toLowerCase();
-                const language = candidate.getAttribute('data-language');
+            candidateElements.forEach(el => {{
+                const filePath = el.getAttribute('data-file').toLowerCase();
+                const language = el.getAttribute('data-language');
                 
                 const fileMatch = filePath.includes(fileFilter);
                 const languageMatch = languageFilter === 'all' || language === languageFilter;
                 
-                if (fileMatch && languageMatch) {{
-                    candidate.style.display = 'block';
-                }} else {{
-                    candidate.style.display = 'none';
-                }}
+                el.style.display = (fileMatch && languageMatch) ? 'block' : 'none';
+            }});
+            
+            unusedElements.forEach(el => {{
+                const filePath = el.getAttribute('data-file').toLowerCase();
+                const language = el.getAttribute('data-language');
+                
+                const fileMatch = filePath.includes(fileFilter);
+                const languageMatch = languageFilter === 'all' || language === languageFilter;
+                
+                el.style.display = (fileMatch && languageMatch) ? 'block' : 'none';
             }});
         }}
     </script>
@@ -500,6 +515,43 @@ def generate_candidates_html(candidates):
     return html
 
 
+def generate_unused_elements_html(unused_elements):
+    """未使用要素のHTML表現を生成"""
+    html = ""
+    for element in unused_elements:
+        elem_type = element.get('type', 'unknown')
+        badge = ""
+        detail = ""
+        if elem_type == 'function':
+            badge = '<span class="badge">関数</span>'
+            if element.get('class'):
+                detail = f"{element['class']}.{element['name']}"
+            else:
+                detail = element['name']
+        elif elem_type == 'class':
+            badge = '<span class="badge badge-success">クラス</span>'
+            detail = element['name']
+        elif elem_type == 'variable':
+            if element.get('is_constant', False):
+                badge = '<span class="badge badge-warning">定数</span>'
+            else:
+                badge = '<span class="badge badge-warning">変数</span>'
+            if element.get('class'):
+                detail = f"{element['class']}.{element['name']}"
+            else:
+                detail = element['name']
+        else:
+            badge = '<span class="badge">不明</span>'
+            detail = element['name']
+        
+        html += f"""
+        <div class="unused-element" data-file="{element['file']}" data-language="{get_language_from_extension(os.path.splitext(element['file'])[1].lower())}">
+            {badge} {detail} <span class="path">{element['file']}</span> <strong>行:</strong> {element['line']}
+        </div>
+        """
+    return html
+
+
 def get_language_from_extension(extension):
     """ファイル拡張子から言語名を取得"""
     extension_map = {
@@ -557,8 +609,9 @@ def collect_language_stats(candidates):
     return stats
 
 
-def generate_html_report(json_file, output_file, project_path=None):
-    """JSONデータからHTMLレポートを生成"""
+def generate_html_report(json_file, output_file, project_path=None, unused_json_file=None):
+    """JSONデータからHTMLレポートを生成
+    unused_json_file: 未使用要素のJSONファイル。存在すれば未使用要素セクションを追加する"""
     with open(json_file, 'r', encoding='utf-8') as f:
         candidates = json.load(f)
     
@@ -573,6 +626,12 @@ def generate_html_report(json_file, output_file, project_path=None):
     total_file_count = sum(stats['files'] for stats in language_stats.values())
     total_function_count = sum(stats['functions'] for stats in language_stats.values())
     
+    # 未使用要素の読み込み
+    unused_elements = []
+    if unused_json_file and os.path.exists(unused_json_file):
+        with open(unused_json_file, 'r', encoding='utf-8') as f:
+            unused_elements = json.load(f)
+    
     # HTMLを生成
     html = HTML_TEMPLATE.format(
         analysis_date=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -583,7 +642,8 @@ def generate_html_report(json_file, output_file, project_path=None):
         candidate_count=len(candidates),
         language_options=generate_language_options(language_stats.keys()),
         language_cards=generate_language_cards(language_stats),
-        candidates_html=generate_candidates_html(candidates)
+        candidates_html=generate_candidates_html(candidates),
+        unused_elements_html=generate_unused_elements_html(unused_elements)
     )
     
     # HTMLをファイルに保存
@@ -598,10 +658,10 @@ def main():
     parser.add_argument('json_file', help='入力JSONファイル (code_analyzer.pyの出力)')
     parser.add_argument('--output', '-o', help='出力HTMLファイル', default='code_analysis_report.html')
     parser.add_argument('--project-path', '-p', help='プロジェクトのルートパス')
-    
+    parser.add_argument('--unused-json', help='未使用要素JSONファイル', default='unused_elements.json')
     args = parser.parse_args()
     
-    generate_html_report(args.json_file, args.output, args.project_path)
+    generate_html_report(args.json_file, args.output, args.project_path, args.unused_json)
 
 
 if __name__ == "__main__":
